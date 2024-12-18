@@ -1,0 +1,2 @@
+# navigation2_virual_wall
+在navigation2中显现不使用批图的虚拟墙服务
