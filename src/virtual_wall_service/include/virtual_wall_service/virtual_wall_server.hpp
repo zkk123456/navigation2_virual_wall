@@ -48,7 +48,7 @@ using lifecycle_msgs::msg::Transition;
 using namespace std::placeholders;
 
 
-namespace beefast_virtual_wall_service {
+namespace virtual_wall_service {
 
 using DatabaseService = beefast_interfaces::srv::ManageDb;
 class VirtualWallServer  : public rclcpp::Node 
@@ -128,6 +128,6 @@ private :
 
 };
 
-} // namespace beefast_virtual_wall_service
+} // namespace virtual_wall_service
 
 #endif // BEEFAST_VIRUAL_WALL_SERVICE__VIRUAL_WALL_SERVER_HPP_

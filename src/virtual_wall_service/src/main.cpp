@@ -1,17 +1,17 @@
-#include "beefast_virtual_wall_service/virtual_wall_server.hpp"
+#include "virtual_wall_service/virtual_wall_server.hpp"
 
 int main(int argc, char **argv)
 {  
     rclcpp::init(argc, argv);
     // 赋值配置参数
-    std::string node_name = "beefast_virtual_wall_service";
-    auto application_ = std::make_shared<beefast_virtual_wall_service::VirtualWallServer>(node_name);   
+    std::string node_name = "virtual_wall_service";
+    auto application_ = std::make_shared<virtual_wall_service::VirtualWallServer>(node_name);   
     auto synchronous_client = std::make_shared<rclcpp::SyncParametersClient>(application_);        
     auto load_future = synchronous_client->load_parameters("/opt/beefast/config/beefast.yaml");
-    RCLCPP_INFO(rclcpp::get_logger("beefast_virtual_wall_service"), "beefast_virtual_wall_service loaded the parameters successfully");
+    RCLCPP_INFO(rclcpp::get_logger("virtual_wall_service"), "virtual_wall_service loaded the parameters successfully");
     application_->Startup();   
     // std::this_thread::sleep_for(std::chrono::seconds(3));
-    // RCLCPP_INFO(rclcpp::get_logger("beefast_virtual_wall_service"), "reflush virtual wall");  
+    // RCLCPP_INFO(rclcpp::get_logger("virtual_wall_service"), "reflush virtual wall");  
     // application_->RefreshVirtualWall(1);
 
      // JSON 数据字符串

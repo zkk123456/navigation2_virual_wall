@@ -1,9 +1,9 @@
-#include "beefast_virtual_wall_service/virtual_wall_server.hpp"
+#include "virtual_wall_service/virtual_wall_server.hpp"
 #include <iomanip>  
 #include <sstream>
 
 
-namespace beefast_virtual_wall_service
+namespace virtual_wall_service
 {
     VirtualWallServer::VirtualWallServer(const std::string &node_name, const std::string &ns,
              const rclcpp::NodeOptions &options) : rclcpp::Node(node_name, ns, options)

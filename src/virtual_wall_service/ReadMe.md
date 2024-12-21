@@ -1,5 +1,5 @@
 ## 编译方式
-    colcon build --merge-install --cmake-args -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON --packages-select beefast_virtual_wall_service
+    colcon build --merge-install --cmake-args -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON --packages-select virtual_wall_service
 
 ## 编译方式
     ros2 run beefast_virual_wall_service virual_wall_server
