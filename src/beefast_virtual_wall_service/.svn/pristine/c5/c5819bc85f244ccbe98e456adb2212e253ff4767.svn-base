@@ -1,0 +1,21 @@
+#include "beefast_virual_wall_service/virual_wall_server.hpp"
+
+int main(int argc, char **argv)
+{  
+    rclcpp::init(argc, argv);
+    // 赋值配置参数
+    std::string node_name = "beefast_virual_wall_service";
+    auto application_ = std::make_shared<beefast_virual_wall_service::VirualWallServer>(node_name);   
+    auto synchronous_client = std::make_shared<rclcpp::SyncParametersClient>(application_);        
+    auto load_future = synchronous_client->load_parameters("/opt/beefast/data/params/beefast.yaml");
+    RCLCPP_INFO(rclcpp::get_logger("beefast_virual_wall_service"), "beefast_virual_wall_service loaded the parameters successfully");
+    application_->Startup();   
+    // std::this_thread::sleep_for(std::chrono::seconds(10));
+    // RCLCPP_INFO(rclcpp::get_logger("beefast_virual_wall_service"), "reflush virual wall");  
+    // application_->RefreshVirualWall(1);
+
+    rclcpp::spin(application_->get_node_base_interface());
+    // 关闭解析命令行标志
+    rclcpp::shutdown(); 
+    return 0;
+}

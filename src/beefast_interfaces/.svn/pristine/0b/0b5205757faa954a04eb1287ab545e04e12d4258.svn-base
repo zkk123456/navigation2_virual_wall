@@ -1,0 +1,8 @@
+# The desired heading in radians
+string explore_cmd
+---
+# The angular displacement in radians to the starting position
+float32 used_time
+---
+# The remaining rotation in radians
+float32 result

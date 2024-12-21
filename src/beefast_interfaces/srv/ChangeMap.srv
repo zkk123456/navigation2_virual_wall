@@ -1,0 +1,5 @@
+string file_path
+geometry_msgs/Pose initial_pose
+---
+string status
+string response_data

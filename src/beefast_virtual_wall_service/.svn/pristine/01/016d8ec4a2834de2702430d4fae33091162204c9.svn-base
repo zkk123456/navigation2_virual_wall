@@ -1,0 +1,31 @@
+#include "beefast_virtual_wall_service/virtual_wall_server.hpp"
+
+int main(int argc, char **argv)
+{  
+    rclcpp::init(argc, argv);
+    // 赋值配置参数
+    std::string node_name = "beefast_virtual_wall_service";
+    auto application_ = std::make_shared<beefast_virtual_wall_service::VirtualWallServer>(node_name);   
+    auto synchronous_client = std::make_shared<rclcpp::SyncParametersClient>(application_);        
+    auto load_future = synchronous_client->load_parameters("/opt/beefast/data/params/beefast.yaml");
+    RCLCPP_INFO(rclcpp::get_logger("beefast_virtual_wall_service"), "beefast_virtual_wall_service loaded the parameters successfully");
+    application_->Startup();   
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+    // RCLCPP_INFO(rclcpp::get_logger("beefast_virtual_wall_service"), "reflush virtual wall");  
+    // application_->RefreshVirtualWall(1);
+    //"2.87,2.81;2.91,1.99;0.949,1.97;1.07,2.85"
+
+    application_->AddVirtualWall("map_id=2,zone_mode=1,zone_type=3,zone_coordinates=(2.87 2.81)(2.91 1.99)(0.949 1.97)(1.07 2.85)");
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+    application_->AddVirtualWall("map_id=2,zone_mode=1,zone_type=3,zone_coordinates=(-0.364 1.1)(0.615 1.17)(0.653 -0.75)(-0.26 -0.136)");
+
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+
+    application_->DeleteVirtualWall("map_id=2,zone_id=23");
+
+
+    rclcpp::spin(application_->get_node_base_interface());
+    // 关闭解析命令行标志
+    rclcpp::shutdown(); 
+    return 0;
+}

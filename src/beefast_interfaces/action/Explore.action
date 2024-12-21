@@ -1,0 +1,8 @@
+# Request
+string explore_cmd
+---
+# Result
+string explore_result
+---
+# Feedback
+float32 used_time

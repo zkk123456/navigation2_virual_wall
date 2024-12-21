@@ -1,0 +1,202 @@
+#include "beefast_virtual_wall_service/virtual_wall_server.hpp"
+#include <iomanip>  
+#include <sstream>
+
+
+namespace beefast_virtual_wall_service
+{
+    VirtualWallServer::VirtualWallServer(const std::string &node_name, const std::string &ns,
+             const rclcpp::NodeOptions &options) : beefast_utils::ServerNode(node_name, ns, options)
+    {
+        std::cout << "VirtualWallServer Constructor." << std::endl; 
+        //获取导航参数
+        declare_parameter("param_file", "/opt/beefast/data/params/keepout_params.yaml"); 
+        get_parameter("param_file", param_file_);
+
+        virtual_wall_mask_node_ = std::make_shared<beefast_filter_mask::VirtualWall>();  
+        auto synchronous_client = std::make_shared<rclcpp::SyncParametersClient>(virtual_wall_mask_node_);        
+        auto load_future = synchronous_client->load_parameters(param_file_);
+        RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "virtual_wall_mask_node_ loaded the parameters successfully");
+       
+        costmap_filter_info_node_ = std::make_shared<nav2_map_server::CostmapFilterInfoServer>();
+        synchronous_client = std::make_shared<rclcpp::SyncParametersClient>(costmap_filter_info_node_);        
+        load_future = synchronous_client->load_parameters(param_file_);
+        RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "costmap_filter_info_node_ loaded the parameters successfully");
+
+        node_map_.push_back(virtual_wall_mask_node_);    
+        node_map_.push_back(costmap_filter_info_node_);          
+        rclcpp_thread_1 = std::make_unique<nav2_util::NodeThread>(virtual_wall_mask_node_);
+        rclcpp_thread_2 = std::make_unique<nav2_util::NodeThread>(costmap_filter_info_node_);
+        
+        map_pub_ =  this->create_publisher<std_msgs::msg::String>("/generate_map", 1);
+        update_zone_pub_ =  this->create_publisher<std_msgs::msg::String>("/update_zone", 1);
+        shutdown_pub_ =  this->create_publisher<std_msgs::msg::String>("beefast/shutdown", 1);
+        //创建保存地图客户端
+        current_state_ = State::PRIMARY_STATE_UNCONFIGURED;
+    }
+
+    VirtualWallServer::~VirtualWallServer()
+    {
+      std::cout << "VirtualWallServer destructor." << std::endl;
+    }
+
+    bool VirtualWallServer::Startup()
+    {
+      RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "Startup...");
+      bool task_staus = Configure();
+      if(!task_staus)
+        return false;
+      task_staus = Activate();
+      if(!task_staus)
+        return false;
+      current_state_ = State::PRIMARY_STATE_ACTIVE;
+      return true;
+    } 
+
+    //配置
+    bool VirtualWallServer::Configure()
+    {
+        RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "Startup...");
+        for (auto& node: node_map_) 
+        {
+            node->configure(ret);
+            uint8_t state = node->get_current_state().id();
+            if (!(state == State::PRIMARY_STATE_INACTIVE))
+            {
+                RCLCPP_ERROR(rclcpp::get_logger("VirtualWallServer"), "Failed to change configure state for node");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool VirtualWallServer::Activate()
+    {
+      RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "activate...");
+      for (auto& node: node_map_) 
+      {
+        node->activate(ret);
+        uint8_t state = node->get_current_state().id();
+        if (!(state == State::PRIMARY_STATE_ACTIVE))
+        {
+          RCLCPP_ERROR(rclcpp::get_logger("VirtualWallServer"), "Failed to change activate state for node.");
+          return false;
+        }
+      }
+
+    //开机时，启动虚拟墙
+      //提醒cartographer生成/map话题
+      auto message = std::make_shared<std_msgs::msg::String>();
+      message->data = "virtual_wall";
+      map_pub_->publish(*message);
+      //手动添加多边形禁止层
+      std::vector<beefast_filter_mask::MapZone> prohibit_polys;
+      beefast_filter_mask::MapZone zone_one;           
+      zone_one.map_id = 1;
+      zone_one.zone_id = 1;
+      zone_one.zone_type = 3;
+      zone_one.zone_coordinates = "2.87,2.81;2.91,1.99;0.949,1.97;1.07,2.85";
+      prohibit_polys.push_back(zone_one);
+      virtual_wall_mask_node_->UpdateVirtualWall(prohibit_polys);
+      //发布/update_zone话题，提醒 costmap_filter_info_lifecycle
+      update_zone_pub_->publish(*message);
+      current_state_ = State::PRIMARY_STATE_ACTIVE;
+      return true;
+    }
+
+    /**  @brief 去激活
+     * 
+     */
+    bool VirtualWallServer::Deactivate()
+    {
+      RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "deactivate...");
+      for (auto& node: node_map_) 
+      {
+        node->deactivate(ret);
+        uint8_t state = node->get_current_state().id();
+        if (!(state == State::PRIMARY_STATE_INACTIVE))
+        {
+          RCLCPP_ERROR(rclcpp::get_logger("VirtualWallServer"), "Failed to change deactivate state for node.");
+          return false;
+        }
+      }
+      current_state_ = State::PRIMARY_STATE_INACTIVE;
+      return true;   
+    }
+
+        /**  @brief 清理
+         * 
+         */
+    bool VirtualWallServer::Cleanup()
+    {
+      RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "cleanup...");
+      for (auto& node: node_map_) 
+      {
+        node->cleanup(ret);
+        uint8_t state = node->get_current_state().id();
+        if (!(state == State::PRIMARY_STATE_UNCONFIGURED))
+        {
+          RCLCPP_ERROR(rclcpp::get_logger("VirtualWallServer"), "Failed to change cleanup state for node.");
+          return false;
+        }
+      }
+      current_state_ = State::PRIMARY_STATE_UNCONFIGURED;
+      return true;    
+    }
+
+        /**  @brief 关闭
+         * 
+         */
+    bool VirtualWallServer::Shutdown()
+    {
+      RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "shutdown...");
+      for (auto& node: node_map_) 
+      {  
+        node->shutdown(ret);
+        uint8_t state = node->get_current_state().id();
+        if (!(state == State::PRIMARY_STATE_FINALIZED))
+        {
+          RCLCPP_ERROR(rclcpp::get_logger("VirtualWallServer"), "Failed to change shutdown state for node.");
+          return false;
+        }
+      }
+      auto message = std::make_shared<std_msgs::msg::String>();
+      message->data = "virtual_wall_service";
+      shutdown_pub_->publish(*message);
+      current_state_ = State::PRIMARY_STATE_UNCONFIGURED;
+      return true;    
+    }
+
+    uint8_t VirtualWallServer::GetNodeState()
+    {
+      return current_state_;
+    }  
+
+
+/* belief: 动态刷新虚拟墙
+*/
+    void VirtualWallServer::RefreshVirtualWall(int map_id)
+    {
+       //获取虚拟墙信息
+      //提醒cartographer生成/map话题
+      auto message = std::make_shared<std_msgs::msg::String>();
+      message->data = "virtual_wall";
+      map_pub_->publish(*message);
+      //手动添加多边形禁止层
+      std::vector<beefast_filter_mask::MapZone> prohibit_polys;
+      beefast_filter_mask::MapZone zone_two;           
+      zone_two.map_id = 1;
+      zone_two.zone_id = 2;
+      zone_two.zone_type = 3;
+      zone_two.zone_coordinates = "-0.364,1.1;0.615,1.17;0.653,-0.75;-0.26,-0.136";
+      prohibit_polys.push_back(zone_two);
+      virtual_wall_mask_node_->UpdateVirtualWall(prohibit_polys);
+      //发布/update_zone话题，提醒 costmap_filter_info_lifecycle
+      update_zone_pub_->publish(*message);
+    }
+
+    void DeleteVirtualWall(int map_id) {
+      RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "DeleteVirtualWall %d...", map_id);
+    }
+
+}

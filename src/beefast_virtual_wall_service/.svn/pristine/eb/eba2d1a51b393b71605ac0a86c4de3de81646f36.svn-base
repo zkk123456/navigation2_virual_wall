@@ -1,0 +1,306 @@
+#include "beefast_virtual_wall_service/virtual_wall_server.hpp"
+#include <iomanip>  
+#include <sstream>
+
+
+namespace beefast_virtual_wall_service
+{
+    VirtualWallServer::VirtualWallServer(const std::string &node_name, const std::string &ns,
+             const rclcpp::NodeOptions &options) : beefast_utils::ServerNode(node_name, ns, options)
+    {
+        std::cout << "VirtualWallServer Constructor." << std::endl; 
+        //获取导航参数
+        declare_parameter("param_file", "/opt/beefast/data/params/keepout_params.yaml"); 
+        get_parameter("param_file", param_file_);
+
+        virtual_wall_mask_node_ = std::make_shared<beefast_filter_mask::VirtualWall>();  
+        auto synchronous_client = std::make_shared<rclcpp::SyncParametersClient>(virtual_wall_mask_node_);        
+        auto load_future = synchronous_client->load_parameters(param_file_);
+        RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "virtual_wall_mask_node_ loaded the parameters successfully");
+       
+        costmap_filter_info_node_ = std::make_shared<nav2_map_server::CostmapFilterInfoServer>();
+        synchronous_client = std::make_shared<rclcpp::SyncParametersClient>(costmap_filter_info_node_);        
+        load_future = synchronous_client->load_parameters(param_file_);
+        RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "costmap_filter_info_node_ loaded the parameters successfully");
+
+        node_map_.push_back(virtual_wall_mask_node_);    
+        node_map_.push_back(costmap_filter_info_node_);          
+        rclcpp_thread_1 = std::make_unique<nav2_util::NodeThread>(virtual_wall_mask_node_);
+        rclcpp_thread_2 = std::make_unique<nav2_util::NodeThread>(costmap_filter_info_node_);
+        
+        map_pub_ =  this->create_publisher<std_msgs::msg::String>("/generate_map", 1);
+        update_zone_pub_ =  this->create_publisher<std_msgs::msg::String>("/update_zone", 1);
+        shutdown_pub_ =  this->create_publisher<std_msgs::msg::String>("beefast/shutdown", 1);
+        //创建数据库客户端
+        database_client_ = create_client<DatabaseService>("/database_service");
+        while (!database_client_->wait_for_service(std::chrono::seconds(2))) 
+        {
+            if (!rclcpp::ok()) 
+            {
+                RCLCPP_ERROR(get_logger(), "Interrupted while waiting for the service.");
+            }
+            RCLCPP_INFO(get_logger(), "Service not available.");
+        }
+        current_state_ = State::PRIMARY_STATE_UNCONFIGURED;
+    }
+
+    VirtualWallServer::~VirtualWallServer()
+    {
+      std::cout << "VirtualWallServer destructor." << std::endl;
+    }
+
+    bool VirtualWallServer::Startup()
+    {
+      RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "Startup...");
+      bool task_staus = Configure();
+      if(!task_staus)
+        return false;
+      task_staus = Activate();
+      if(!task_staus)
+        return false;
+      current_state_ = State::PRIMARY_STATE_ACTIVE;
+      return true;
+    } 
+
+    //配置
+    bool VirtualWallServer::Configure()
+    {
+        RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "Startup...");
+        for (auto& node: node_map_) 
+        {
+            node->configure(ret);
+            uint8_t state = node->get_current_state().id();
+            if (!(state == State::PRIMARY_STATE_INACTIVE))
+            {
+                RCLCPP_ERROR(rclcpp::get_logger("VirtualWallServer"), "Failed to change configure state for node");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool VirtualWallServer::Activate()
+    {
+      RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "activate...");
+      for (auto& node: node_map_) 
+      {
+        node->activate(ret);
+        uint8_t state = node->get_current_state().id();
+        if (!(state == State::PRIMARY_STATE_ACTIVE))
+        {
+          RCLCPP_ERROR(rclcpp::get_logger("VirtualWallServer"), "Failed to change activate state for node.");
+          return false;
+        }
+      }
+      current_state_ = State::PRIMARY_STATE_ACTIVE;
+      return true;
+    }
+
+    /**  @brief 去激活
+     * 
+     */
+    bool VirtualWallServer::Deactivate()
+    {
+      RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "deactivate...");
+      for (auto& node: node_map_) 
+      {
+        node->deactivate(ret);
+        uint8_t state = node->get_current_state().id();
+        if (!(state == State::PRIMARY_STATE_INACTIVE))
+        {
+          RCLCPP_ERROR(rclcpp::get_logger("VirtualWallServer"), "Failed to change deactivate state for node.");
+          return false;
+        }
+      }
+      current_state_ = State::PRIMARY_STATE_INACTIVE;
+      return true;   
+    }
+
+        /**  @brief 清理
+         * 
+         */
+    bool VirtualWallServer::Cleanup()
+    {
+      RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "cleanup...");
+      for (auto& node: node_map_) 
+      {
+        node->cleanup(ret);
+        uint8_t state = node->get_current_state().id();
+        if (!(state == State::PRIMARY_STATE_UNCONFIGURED))
+        {
+          RCLCPP_ERROR(rclcpp::get_logger("VirtualWallServer"), "Failed to change cleanup state for node.");
+          return false;
+        }
+      }
+      current_state_ = State::PRIMARY_STATE_UNCONFIGURED;
+      return true;    
+    }
+
+        /**  @brief 关闭
+         * 
+         */
+    bool VirtualWallServer::Shutdown()
+    {
+      RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "shutdown...");
+      for (auto& node: node_map_) 
+      {  
+        node->shutdown(ret);
+        uint8_t state = node->get_current_state().id();
+        if (!(state == State::PRIMARY_STATE_FINALIZED))
+        {
+          RCLCPP_ERROR(rclcpp::get_logger("VirtualWallServer"), "Failed to change shutdown state for node.");
+          return false;
+        }
+      }
+      auto message = std::make_shared<std_msgs::msg::String>();
+      message->data = "virtual_wall_service";
+      shutdown_pub_->publish(*message);
+      current_state_ = State::PRIMARY_STATE_UNCONFIGURED;
+      return true;    
+    }
+
+    uint8_t VirtualWallServer::GetNodeState()
+    {
+      return current_state_;
+    }  
+
+    std::unordered_map<std::string, std::string> VirtualWallServer::ParseKeyword(const std::string &input)
+    {
+        std::unordered_map<std::string, std::string> result;
+        std::istringstream iss(input);
+        std::string token;
+        while (std::getline(iss, token, ','))
+        {
+            std::istringstream tokenStream(token);
+            std::string key, value;
+            std::getline(tokenStream, key, '=');
+            std::getline(tokenStream, value, '=');
+            result[key] = value;
+        }
+        return result;
+    }
+
+    // 分割字符串的辅助函数
+    std::vector<std::string> VirtualWallServer::StringSplit(const std::string &str, char delimiter) 
+    {
+      std::vector<std::string> tokens;
+      std::stringstream ss(str);
+      std::string token;
+      while (std::getline(ss, token, delimiter)) 
+      {
+            tokens.push_back(token);
+      }
+      return tokens;
+    }
+
+
+/* belief: 动态刷新虚拟墙
+*/
+    void VirtualWallServer::RefreshVirtualWall(int map_id)
+    {   
+      RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "RefreshVirtualWall %d...", map_id);
+      std::string zone_datas;
+      auto request = std::make_shared<DatabaseService::Request>();
+      request->command = DatabaseService::Request::QUERY;
+      request->type  = "virtual_wall_service";
+      request->request_data = std::to_string(map_id);
+      auto result_future = database_client_->async_send_request(request);
+      RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "request server start.");
+      // Wait for the result.
+      if (rclcpp::spin_until_future_complete(shared_from_this(), result_future) ==
+        rclcpp::FutureReturnCode::SUCCESS)
+      {
+          auto result = result_future.get();
+          zone_datas = result->response_data;    
+          RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "Result: %s", zone_datas.c_str());
+      } else {
+        RCLCPP_ERROR(rclcpp::get_logger("rclcpp"), "Failed to call service RefreshVirtualWall");
+      }
+      
+      
+      // 分割字符串
+      std::vector<std::string> coordinate_pairs = StringSplit(zone_datas, ';');
+      // 存储 MapZone 的 vector
+      std::vector<beefast_filter_mask::MapZone> map_zones;
+      for (const auto &pair : coordinate_pairs) 
+      {
+          std::vector<std::string> coordinates = StringSplit(pair, ',');
+          if (coordinates.size() == 5) 
+          {
+              beefast_filter_mask::MapZone zone;
+              zone.map_id = std::atoi(coordinates[0].c_str());
+              zone.zone_id = std::atoi(coordinates[1].c_str());
+              zone.zone_mode = std::atoi(coordinates[2].c_str());
+              zone.zone_type = std::atoi(coordinates[3].c_str());
+              zone.zone_coordinates = coordinates[4];
+              map_zones.push_back(zone);
+          }
+      } 
+      RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "map_zones.size() : %d.",map_zones.size());
+       //获取虚拟墙信息
+      //提醒cartographer生成/map话题
+      auto message = std::make_shared<std_msgs::msg::String>();
+      message->data = "virtual_wall";
+      map_pub_->publish(*message);
+      //手动添加多边形禁止层
+      virtual_wall_mask_node_->UpdateVirtualWall(map_zones);
+      //发布/update_zone话题，提醒 costmap_filter_info_lifecycle
+      update_zone_pub_->publish(*message);
+    }
+
+    void VirtualWallServer::AddVirtualWall(std::string param)
+    {
+      RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "AddVirtualWall %d...", param.c_str());
+      auto request = std::make_shared<DatabaseService::Request>();
+      request->command = DatabaseService::Request::WRITE;
+      request->type  = "virtual_wall_service";
+      request->request_data = param;
+      auto result_future = database_client_->async_send_request(request);
+      RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "request server start.");
+      if (rclcpp::spin_until_future_complete(shared_from_this(), result_future) ==
+        rclcpp::FutureReturnCode::SUCCESS)
+      {
+        RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "AddVirtualWall,add virtual wall successfully.");
+      } else {
+        RCLCPP_ERROR(rclcpp::get_logger("VirtualWallServer"), "AddVirtualWall,Invalid future");
+      }
+
+      std::unordered_map<std::string, std::string> keyValuePairs = ParseKeyword(param);
+      //判断keyValuePairs中是否包含map_id和new_name
+      if(keyValuePairs.find("map_id") == keyValuePairs.end())
+      {
+        RCLCPP_ERROR(rclcpp::get_logger("VirtualWallServer"), "Failed to refresh the virtual wall because map_id is empty.");
+        return ;
+      }  
+      int map_id = std::atoi(keyValuePairs["map_id"].c_str());
+      RefreshVirtualWall(map_id);
+      return ;
+    }
+
+    void VirtualWallServer::DeleteVirtualWall(std::string param) 
+    {
+      RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "DeleteVirtualWall %s...", param.c_str());
+      auto request = std::make_shared<DatabaseService::Request>();
+      request->command = DatabaseService::Request::DELETE;
+      request->type  = "virtual_wall_service";
+      request->request_data = param;
+      auto result_future = database_client_->async_send_request(request);
+      if (rclcpp::spin_until_future_complete(shared_from_this(), result_future) ==
+        rclcpp::FutureReturnCode::SUCCESS)
+      {
+        RCLCPP_INFO(rclcpp::get_logger("VirtualWallServer"), "DeleteVirtualWall,delete virtual wall successfully.");
+      } else {
+        RCLCPP_ERROR(rclcpp::get_logger("VirtualWallServer"), "DeleteVirtualWall,Invalid future");
+      }
+      std::unordered_map<std::string, std::string> keyValuePairs = ParseKeyword(param);
+      //判断keyValuePairs中是否包含map_id和new_name
+      if(keyValuePairs.find("map_id") == keyValuePairs.end())
+      {
+        RCLCPP_ERROR(rclcpp::get_logger("VirtualWallServer"), "Failed to refresh the virtual wall because map_id is empty.");
+        return ;
+      }  
+      int map_id = std::atoi(keyValuePairs["map_id"].c_str());
+      RefreshVirtualWall(map_id);
+      return ;
+    }
+}

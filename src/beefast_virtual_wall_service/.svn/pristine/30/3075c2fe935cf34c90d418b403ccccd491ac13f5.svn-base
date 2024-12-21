@@ -1,0 +1,9 @@
+## 编译方式
+    colcon build --merge-install --cmake-args -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON --packages-select beefast_virtual_wall_service
+
+## 编译方式
+    ros2 run beefast_virual_wall_service virual_wall_server
+
+## 对外接口
+	动态刷新虚拟墙：
+	void VirualWallServer::RefreshVirualWall(int map_id)

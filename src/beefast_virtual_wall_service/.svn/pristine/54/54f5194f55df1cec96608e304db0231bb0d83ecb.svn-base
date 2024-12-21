@@ -1,0 +1,133 @@
+/*
+'''
+@Time    : 2023/12/26  18:45
+@Author  : ZHANG KAI KAI
+@Contact : 1936230913@qq.com
+@Version : 0.3
+@Language: c++
+@Desc    : 禁行区域配置存储模块
+  */
+#ifndef BEEFAST_VIRUAL_WALL_SERVICE__VIRUAL_WALL_SERVER_HPP_
+#define BEEFAST_VIRUAL_WALL_SERVICE__VIRUAL_WALL_SERVER_HPP_
+
+#include <algorithm>
+#include <chrono>
+#include <ctime>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unordered_map>
+#include <ament_index_cpp/get_package_share_directory.hpp>  
+#include "rclcpp/rclcpp.hpp"
+#include "rclcpp_lifecycle/lifecycle_node.hpp"
+#include <rclcpp/parameter_service.hpp>
+#include <rclcpp/parameter_client.hpp>  
+#include "rclcpp_action/rclcpp_action.hpp"
+#include "lifecycle_msgs/srv/change_state.hpp"
+#include "lifecycle_msgs/srv/get_state.hpp"
+#include "std_msgs/msg/string.hpp"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.h"
+#include "nav2_msgs/action/navigate_to_pose.hpp"
+#include "nav2_util/geometry_utils.hpp"
+#include "nav2_util/lifecycle_node.hpp"
+#include "nav2_util/node_thread.hpp"
+#include "beefast_utils/string_utils.hpp"
+#include "beefast_utils/server_node.hpp"
+
+#include "nav2_map_server/costmap_filter_info_server.hpp"
+#include "beefast_filter_mask/virtual_wall.hpp"
+#include "beefast_interfaces/srv/get_database.hpp"
+
+using lifecycle_msgs::msg::Transition;
+using lifecycle_msgs::msg::State;
+using lifecycle_msgs::msg::Transition;
+using namespace std::placeholders;
+
+
+namespace beefast_virtual_wall_service {
+
+
+using DatabaseService = beefast_interfaces::srv::GetDatabase;
+class VirtualWallServer : public beefast_utils::ServerNode 
+{
+public:
+        /**
+         * @brief d导航服务的构造函数
+         *
+         * @param[in] name 服务器名称
+		 * @param[in] nav_param 导航参数
+         */
+        VirtualWallServer(const std::string &node_name, const std::string &ns = "",
+             const rclcpp::NodeOptions &options = 
+             rclcpp::NodeOptions().allow_undeclared_parameters(true).automatically_declare_parameters_from_overrides(true));
+
+        /**
+         * @brief 析构函数
+         */
+        ~VirtualWallServer();
+
+         /**@brief 开始节点  先配置节点，再激活节点
+         *  
+         * @return bool 开始节点返回true，否则返回false
+         */
+        virtual bool Startup();
+
+        //配置，激活，去激活，清理，关闭
+        virtual bool Configure();
+
+        /**  @brief 激活
+         * 
+         */
+        virtual bool Activate();
+
+        /**  @brief 去激活
+         * 
+         */
+        virtual bool Deactivate();
+
+        /**  @brief 清理
+         * 
+         */
+        virtual bool Cleanup();
+
+        /**  @brief 关闭
+         * 
+         */
+        virtual bool Shutdown();
+
+        virtual uint8_t GetNodeState();
+
+        void RefreshVirtualWall(int map_id);
+
+        void AddVirtualWall(std::string param);
+
+        void DeleteVirtualWall(int map_id);
+
+private :
+    uint8_t current_state_;
+    std::string param_file_;
+    std::shared_ptr<nav2_map_server::CostmapFilterInfoServer> costmap_filter_info_node_;
+    std::shared_ptr<beefast_filter_mask::VirtualWall> virtual_wall_mask_node_;
+    rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn ret = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::ERROR;
+
+    std::vector<std::shared_ptr<nav2_util::LifecycleNode>> node_map_;
+    std::unique_ptr<nav2_util::NodeThread> rclcpp_thread_1;
+    std::unique_ptr<nav2_util::NodeThread> rclcpp_thread_2;
+    std::shared_ptr<rclcpp::Publisher<std_msgs::msg::String>> shutdown_pub_;
+    
+    //提醒OccupancyGridNode发布/map话题
+    std::shared_ptr<rclcpp::Publisher<std_msgs::msg::String>>  map_pub_; 
+    //通知costmap_filter_info_server 更新filter数据
+    std::shared_ptr<rclcpp::Publisher<std_msgs::msg::String>> update_zone_pub_; 
+
+    rclcpp::Client<DatabaseService>::SharedPtr database_client_;
+
+
+};
+
+} // namespace beefast_virtual_wall_service
+
+#endif // BEEFAST_VIRUAL_WALL_SERVICE__VIRUAL_WALL_SERVER_HPP_
